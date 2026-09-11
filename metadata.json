@@ -1,0 +1,6 @@
+{
+  "name": "Mô Phỏng Động Năng, Thế Năng & Cơ Năng - KHTN 9",
+  "description": "Mô phỏng tương tác động năng, thế năng và bảo toàn cơ năng theo sách KHTN 9 - Kết nối tri thức với cuộc sống. Song ngữ Việt - Anh.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
