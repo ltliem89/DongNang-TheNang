@@ -13,6 +13,7 @@ import {
   formatDistance,
 } from '../data/kineticData';
 import { VehicleGraphic, ObstacleGraphic } from './KineticGraphics';
+import { KineticComparisonMode } from './KineticComparisonMode';
 import {
   playRatchetSound,
   playLaunchSound,
@@ -50,6 +51,9 @@ interface ZoneKineticProps {
 export const ZoneKinetic: React.FC<ZoneKineticProps> = ({ lang }) => {
   const t = DICTIONARY[lang];
   const kText = t.kineticZone;
+
+  // View Mode: 'compare' (Side-by-side comparison) or 'single' (Detailed single track exploration)
+  const [viewMode, setViewMode] = useState<'single' | 'compare'>('compare');
 
   // 1. Vehicle Selection State
   const [vehicleCategory, setVehicleCategory] = useState<'lab' | 'real'>('lab');
@@ -500,7 +504,55 @@ export const ZoneKinetic: React.FC<ZoneKineticProps> = ({ lang }) => {
         </div>
       </div>
 
-      {/* Prediction Banner */}
+      {/* Mode Switcher: Single Track vs Side-by-Side Comparison */}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/80 p-2 rounded-xl border border-slate-800 shadow-sm">
+        <div className="flex items-center gap-2">
+          <button
+            id="kinetic-mode-compare-btn"
+            onClick={() => setViewMode('compare')}
+            className={`py-2 px-3.5 rounded-lg font-bold text-xs transition flex items-center gap-2 cursor-pointer ${
+              viewMode === 'compare'
+                ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 shadow-md ring-1 ring-amber-400/50'
+                : 'bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-700'
+            }`}
+          >
+            <Scale className="w-4 h-4" />
+            <span>⚡ So sánh song song 2 xe (Đối chứng KHTN 9)</span>
+            <span
+              className={`text-[9.5px] px-1.5 py-0.2 rounded font-mono font-bold ${
+                viewMode === 'compare' ? 'bg-slate-950/40 text-slate-950' : 'bg-amber-400/20 text-amber-300'
+              }`}
+            >
+              Mới
+            </span>
+          </button>
+
+          <button
+            id="kinetic-mode-single-btn"
+            onClick={() => setViewMode('single')}
+            className={`py-2 px-3.5 rounded-lg font-bold text-xs transition flex items-center gap-2 cursor-pointer ${
+              viewMode === 'single'
+                ? 'bg-slate-200 text-slate-950 shadow-md'
+                : 'bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-700'
+            }`}
+          >
+            <Sliders className="w-4 h-4" />
+            <span>🏃‍♂️ Đường đua đơn (Khám phá chuyên sâu)</span>
+          </button>
+        </div>
+
+        <div className="text-xs text-slate-400 hidden sm:block">
+          {viewMode === 'compare'
+            ? '🔬 Chế độ so sánh: Chạy đồng thời 2 xe với khối lượng/tốc độ khác nhau'
+            : '🎯 Chế độ đơn: Tùy chỉnh chi tiết 1 xe, kéo nạp thế năng và thử tài dự đoán Wđ'}
+        </div>
+      </div>
+
+      {viewMode === 'compare' ? (
+        <KineticComparisonMode lang={lang} />
+      ) : (
+        <>
+          {/* Prediction Banner */}
       {predictionActive && (
         <div className="p-3 bg-purple-950/40 border border-purple-500/40 rounded-xl flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-2">
@@ -1328,6 +1380,8 @@ export const ZoneKinetic: React.FC<ZoneKineticProps> = ({ lang }) => {
             })}
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );
