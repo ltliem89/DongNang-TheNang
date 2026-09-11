@@ -22,6 +22,8 @@ import {
   Gauge,
   Volume2,
   VolumeX,
+  ArrowUp,
+  Mountain,
 } from 'lucide-react';
 
 interface ZoneHydroElectricProps {
@@ -34,9 +36,11 @@ export const ZoneHydroElectric: React.FC<ZoneHydroElectricProps> = ({ lang }) =>
 
   // Mass of water packet: 1, 2, 4 kg
   const [mass, setMass] = useState<number>(2);
-  const totalH = 4; // meters
+  // Reservoir elevation / head of water: 0 to 6 meters (Hồ lên cao thì nước mới chảy được)
+  const [heightMeters, setHeightMeters] = useState<number>(4);
+  const totalH = heightMeters;
   const g = 10;
-  const totalWc = mass * g * totalH; // 80 J for m=2, h=4
+  const totalWc = mass * g * heightMeters;
 
   // Mode: 'packet' (1 water block) or 'continuous' (steady plant generation)
   const [generationMode, setGenerationMode] = useState<'packet' | 'continuous'>('packet');
@@ -54,13 +58,16 @@ export const ZoneHydroElectric: React.FC<ZoneHydroElectricProps> = ({ lang }) =>
 
   // Determine current vertical height h based on water front position
   const pipeProgress = Math.min(1, Math.max(0, (progress - 0.05) / 0.75));
-  const currentH = Math.max(0, Math.round((totalH * (1 - pipeProgress)) * 10) / 10);
+  const currentH = heightMeters === 0 ? 0 : Math.max(0, Math.round((heightMeters * (1 - pipeProgress)) * 10) / 10);
   const currentWt = Math.round(mass * g * currentH * 10) / 10;
   const currentWd = Math.round((totalWc - currentWt) * 10) / 10;
-  const currentSpeed = Math.round(Math.sqrt((2 * Math.max(0, currentWd)) / mass) * 10) / 10;
+  const currentSpeed = heightMeters === 0 ? 0 : Math.round(Math.sqrt((2 * Math.max(0, currentWd)) / mass) * 10) / 10;
 
   // Jump to specific landmark state
   const jumpToLandmark = (landmark: 'top' | 'mid' | 'turbine') => {
+    if (heightMeters === 0) {
+      setHeightMeters(4); // Auto-elevate if currently at ground level
+    }
     setIsPlaying(false);
     if (landmark === 'top') {
       setProgress(0);
@@ -76,7 +83,9 @@ export const ZoneHydroElectric: React.FC<ZoneHydroElectricProps> = ({ lang }) =>
       playWaterDropSound(1.2);
     } else {
       setProgress(0.85);
-      const targetR = mass === 1 ? 750 : mass === 2 ? 1150 : 1600;
+      const effectiveH = heightMeters === 0 ? 4 : heightMeters;
+      const speedScale = Math.sqrt(effectiveH / 4);
+      const targetR = Math.round((mass === 1 ? 750 : mass === 2 ? 1150 : 1600) * speedScale);
       setTurbineRpm(targetR);
       setBulbGlowState(1);
       setIsWaterAtTurbine(true);
@@ -141,10 +150,62 @@ export const ZoneHydroElectric: React.FC<ZoneHydroElectricProps> = ({ lang }) =>
           </p>
         </div>
 
-        {/* Conservation Formula, Flow Density, and Mode Selector */}
+        {/* Conservation Formula, Reservoir Height (Cột nước h), Flow Density, and Mode Selector */}
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <div className="px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 font-mono font-bold text-xs sm:text-sm">
-            <span>Wc = Wt + Wđ = const ({totalWc} J)</span>
+            <span>Wc = Wt + Wđ = {totalWc} J</span>
+          </div>
+
+          {/* Reservoir Height (Cột nước h) Selector */}
+          <div className="bg-slate-800/95 p-1 rounded-lg border border-sky-500/40 flex items-center gap-1.5 text-xs shadow-sm">
+            <span className="text-[10px] text-sky-300 px-1.5 font-bold whitespace-nowrap flex items-center gap-1">
+              <Mountain className="w-3 h-3 text-sky-400" />
+              <span>Cột nước hồ (h):</span>
+            </span>
+            {[
+              { val: 0, label: '0m (Đáy - Tắt)', title: 'Hồ ở đáy: Wt = 0 J, nước KHÔNG CHẢY' },
+              { val: 2, label: '2m', title: 'Hồ thấp: Chảy chậm, thế năng 40 J' },
+              { val: 4, label: '4m (Chuẩn)', title: 'Hồ chuẩn: Chảy xiết, thế năng 80 J' },
+              { val: 6, label: '6m (Núi cao)', title: 'Hồ núi cao: Chảy cực mạnh, thế năng 120 J' },
+            ].map((item) => (
+              <button
+                key={item.val}
+                onClick={() => {
+                  setHeightMeters(item.val);
+                  handleReset();
+                }}
+                className={`px-2 py-1 rounded-md transition cursor-pointer font-bold ${
+                  heightMeters === item.val
+                    ? item.val === 0
+                      ? 'bg-amber-500 text-slate-950 shadow'
+                      : 'bg-sky-500 text-slate-950 shadow'
+                    : 'text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700'
+                }`}
+                title={item.title}
+              >
+                {item.label}
+              </button>
+            ))}
+
+            {/* Slider for precision adjustment */}
+            <div className="hidden sm:flex items-center gap-1 pl-1.5 border-l border-slate-700">
+              <input
+                type="range"
+                min="0"
+                max="6"
+                step="0.5"
+                value={heightMeters}
+                onChange={(e) => {
+                  setHeightMeters(parseFloat(e.target.value));
+                  handleReset();
+                }}
+                className="w-16 accent-sky-400 cursor-pointer h-1.5 bg-slate-700 rounded-lg"
+                title="Kéo thanh trượt để nâng hạ mực nước hồ chứa"
+              />
+              <span className="font-mono text-sky-300 font-bold w-7 text-right text-[11px]">
+                {heightMeters}m
+              </span>
+            </div>
           </div>
 
           {/* Flow Density (Mật độ dòng nước) Selector */}
@@ -213,8 +274,14 @@ export const ZoneHydroElectric: React.FC<ZoneHydroElectricProps> = ({ lang }) =>
         <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800 text-xs font-mono">
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-1.5 bg-slate-950/80 px-2.5 py-1 rounded-lg border border-slate-800">
-              <span className="text-slate-400">Độ cao tức thời (h):</span>
-              <strong className="text-sky-400 font-sans text-sm">{currentH} m</strong>
+              <span className="text-slate-400">Cột nước hồ (h):</span>
+              <strong className={`font-sans text-sm ${heightMeters > 0 ? 'text-sky-400' : 'text-amber-400'}`}>
+                {heightMeters} m
+              </strong>
+            </div>
+            <div className="flex items-center gap-1.5 bg-slate-950/80 px-2.5 py-1 rounded-lg border border-slate-800">
+              <span className="text-slate-400">Độ cao tức thời (h_tức thời):</span>
+              <strong className="text-sky-300 font-sans text-sm">{currentH} m</strong>
             </div>
             <div className="flex items-center gap-1.5 bg-slate-950/80 px-2.5 py-1 rounded-lg border border-slate-800">
               <span className="text-slate-400">Tốc độ nước (v):</span>
@@ -280,12 +347,30 @@ export const ZoneHydroElectric: React.FC<ZoneHydroElectricProps> = ({ lang }) =>
 
         {/* Physical Reaction Notice Banner */}
         <div className="px-3 py-2 rounded-xl text-xs font-medium border transition-colors duration-200">
-          {!isWaterAtTurbine ? (
+          {heightMeters === 0 ? (
+            <div className="flex items-center justify-between gap-2 text-amber-300 bg-amber-950/50 border-amber-600/50 w-full p-2.5 rounded-lg">
+              <div className="flex items-center gap-2">
+                <Mountain className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                <span>
+                  ⚠️ <strong>Hồ ở ngang đáy (h = 0m)</strong>: Không có thế năng trọng trường (Wt = 0 J) → Nước <strong>KHÔNG THỂ CHẢY</strong> vào ống! Hồ phải lên cao thì nước mới chảy được.
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  setHeightMeters(4);
+                  handleReset();
+                }}
+                className="px-3 py-1 bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs rounded-lg cursor-pointer whitespace-nowrap"
+              >
+                🌊 Nâng hồ lên 4m
+              </button>
+            </div>
+          ) : !isWaterAtTurbine ? (
             <div className="flex items-center gap-2 text-sky-300 bg-sky-950/40 border-sky-600/40 w-full p-2 rounded-lg">
               <Droplets className="w-4 h-4 text-sky-400 flex-shrink-0 animate-bounce" />
               <span>
                 {progress === 0
-                  ? 'Nước sẵn sàng ở hồ chứa cao (h = 4m). Bấm "Mở van xả nước" để các hạt nước lao xuống sườn đập!'
+                  ? `Nước sẵn sàng ở hồ chứa cao (h = ${heightMeters}m, Wt = ${totalWc} J). Bấm "Mở van xả nước" để các hạt nước lao xuống sườn đập!`
                   : 'Dòng các hạt nước đang lao dốc trong ống áp lực... Khi hạt nước vừa chạm cánh quạt, tua-bin sẽ quay từ chậm lên nhanh theo mật độ nước!'}
               </span>
             </div>
@@ -293,7 +378,7 @@ export const ZoneHydroElectric: React.FC<ZoneHydroElectricProps> = ({ lang }) =>
             <div className="flex items-center gap-2 text-amber-300 bg-amber-950/40 border-amber-600/40 w-full p-2 rounded-lg animate-pulse">
               <Zap className="w-4 h-4 text-amber-400 flex-shrink-0" />
               <span>
-                ⚡ Các hạt nước đang va đập trực tiếp vào cánh tua-bin! Động năng dòng nước (mật độ {mass} kg/s) làm tua-bin tăng tốc từ chậm lên nhanh ({Math.round(turbineRpm)} RPM) → Máy phát điện thắp sáng bóng đèn!
+                ⚡ Các hạt nước đang va đập trực tiếp vào cánh tua-bin! Động năng dòng nước (mật độ {mass} kg/s, cột nước {heightMeters}m) làm tua-bin tăng tốc ({Math.round(turbineRpm)} RPM) → Máy phát điện thắp sáng bóng đèn!
               </span>
             </div>
           )}
@@ -303,6 +388,7 @@ export const ZoneHydroElectric: React.FC<ZoneHydroElectricProps> = ({ lang }) =>
         <div className="relative w-full">
           <HydroCanvas
             mass={mass}
+            heightMeters={heightMeters}
             generationMode={generationMode}
             isPlaying={isPlaying}
             progress={progress}
@@ -313,6 +399,10 @@ export const ZoneHydroElectric: React.FC<ZoneHydroElectricProps> = ({ lang }) =>
               setTurbineRpm(rpm);
               setBulbGlowState(glow);
               setIsWaterAtTurbine(striking);
+            }}
+            onElevateReservoir={() => {
+              setHeightMeters(4);
+              handleReset();
             }}
           />
         </div>
@@ -332,7 +422,7 @@ export const ZoneHydroElectric: React.FC<ZoneHydroElectricProps> = ({ lang }) =>
                   : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
               }`}
             >
-              1. Đỉnh đập (h = 4m, Wt max)
+              1. Đỉnh đập (h = {heightMeters}m, Wt max = {totalWc}J)
             </button>
             <button
               onClick={() => jumpToLandmark('mid')}
@@ -342,7 +432,7 @@ export const ZoneHydroElectric: React.FC<ZoneHydroElectricProps> = ({ lang }) =>
                   : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
               }`}
             >
-              2. Giữa ống (h = 2m, Wt = Wđ)
+              2. Giữa ống (h = {(heightMeters / 2).toFixed(1)}m, Wt = Wđ = {Math.round(totalWc / 2)}J)
             </button>
             <button
               onClick={() => jumpToLandmark('turbine')}
@@ -352,7 +442,7 @@ export const ZoneHydroElectric: React.FC<ZoneHydroElectricProps> = ({ lang }) =>
                   : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
               }`}
             >
-              3. Chân turbine (h = 0m, Wđ max)
+              3. Chân turbine (h = 0m, Wđ max = {totalWc}J)
             </button>
           </div>
         </div>
@@ -382,7 +472,7 @@ export const ZoneHydroElectric: React.FC<ZoneHydroElectricProps> = ({ lang }) =>
               <div className="h-4 bg-slate-950 rounded-full overflow-hidden p-0.5 border border-slate-800">
                 <div
                   className="h-full bg-gradient-to-r from-sky-500 to-blue-500 rounded-full transition-all duration-100"
-                  style={{ width: `${(currentWt / totalWc) * 100}%` }}
+                  style={{ width: totalWc > 0 ? `${(currentWt / totalWc) * 100}%` : '0%' }}
                 />
               </div>
             </div>
@@ -396,7 +486,7 @@ export const ZoneHydroElectric: React.FC<ZoneHydroElectricProps> = ({ lang }) =>
               <div className="h-4 bg-slate-950 rounded-full overflow-hidden p-0.5 border border-slate-800">
                 <div
                   className="h-full bg-gradient-to-r from-amber-500 to-orange-500 rounded-full transition-all duration-100"
-                  style={{ width: `${(currentWd / totalWc) * 100}%` }}
+                  style={{ width: totalWc > 0 ? `${(currentWd / totalWc) * 100}%` : '0%' }}
                 />
               </div>
             </div>
@@ -405,10 +495,13 @@ export const ZoneHydroElectric: React.FC<ZoneHydroElectricProps> = ({ lang }) =>
             <div>
               <div className="flex justify-between text-xs font-mono mb-1">
                 <span className="text-emerald-400 font-semibold">Tổng cơ năng (Wc = Wt + Wđ):</span>
-                <span className="text-emerald-300 font-bold">{totalWc} J (BẢO TOÀN)</span>
+                <span className="text-emerald-300 font-bold">{totalWc} J {totalWc > 0 ? '(BẢO TOÀN)' : '(Hồ ở đáy)'}</span>
               </div>
               <div className="h-4 bg-slate-950 rounded-full overflow-hidden p-0.5 border border-slate-800">
-                <div className="h-full w-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full" />
+                <div
+                  className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full transition-all duration-100"
+                  style={{ width: totalWc > 0 ? '100%' : '0%' }}
+                />
               </div>
             </div>
           </div>
@@ -528,7 +621,7 @@ export const ZoneHydroElectric: React.FC<ZoneHydroElectricProps> = ({ lang }) =>
               </table>
             </div>
             <p className="text-[11px] text-slate-400 mt-2 italic leading-relaxed">
-              * Chú ý KHTN 9: Ở giữa dốc, hạt nước đã có động năng 40 J nhưng tua-bin chưa quay vì các hạt nước chưa physically tiếp xúc tới cánh quạt!
+              * Ghi nhớ KHTN 9: Hồ chứa phải ở trên cao (h &gt; 0m) thì mới có thế năng hấp dẫn Wt = m·g·h để nước tự chảy dốc xuống. Khi chảy dọc ống áp lực, thế năng chuyển dần thành động năng Wđ. Tua-bin chỉ quay khi các hạt nước va đập trực tiếp vào cánh quạt.
             </p>
           </div>
         </div>

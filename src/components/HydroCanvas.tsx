@@ -8,6 +8,7 @@ import {
 
 interface HydroCanvasProps {
   mass: number; // 1, 2, 4 kg (mật độ dòng nước)
+  heightMeters: number; // 0 to 6 meters (độ cao hồ chứa / cột nước)
   generationMode: 'packet' | 'continuous';
   isPlaying: boolean;
   progress: number; // 0 to 1.25 in packet mode, or continuous
@@ -15,6 +16,7 @@ interface HydroCanvasProps {
   isSlowMo: boolean;
   soundEnabled: boolean;
   onTurbineMetrics: (rpm: number, bulbGlow: number, isStriking: boolean) => void;
+  onElevateReservoir?: () => void;
 }
 
 interface HydroDroplet {
@@ -70,6 +72,7 @@ interface HydroRipple {
 
 export const HydroCanvas: React.FC<HydroCanvasProps> = ({
   mass,
+  heightMeters,
   generationMode,
   isPlaying,
   progress,
@@ -77,6 +80,7 @@ export const HydroCanvas: React.FC<HydroCanvasProps> = ({
   isSlowMo,
   soundEnabled,
   onTurbineMetrics,
+  onElevateReservoir,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -105,8 +109,8 @@ export const HydroCanvas: React.FC<HydroCanvasProps> = ({
 
   // Synchronize audio
   useEffect(() => {
-    if (soundEnabled && isPlaying) {
-      const vol = 0.08 + (mass / 4) * 0.12;
+    if (soundEnabled && isPlaying && heightMeters > 0) {
+      const vol = (0.07 + (mass / 4) * 0.11) * Math.min(1, Math.max(0.4, heightMeters / 4));
       startWaterfallAudio(vol);
     } else {
       stopWaterfallAudio();
@@ -114,13 +118,13 @@ export const HydroCanvas: React.FC<HydroCanvasProps> = ({
     return () => {
       stopWaterfallAudio();
     };
-  }, [soundEnabled, isPlaying, mass]);
+  }, [soundEnabled, isPlaying, mass, heightMeters]);
 
   // Handle Play / Stop triggers for packet mode
   useEffect(() => {
     if (isPlaying && !prevIsPlayingRef.current) {
-      // Start of a new flow
-      if (generationMode === 'packet') {
+      // Start of a new flow (only if reservoir has elevation h > 0)
+      if (generationMode === 'packet' && heightMeters > 0) {
         const total = 180 + mass * 90; // 1kg: 270, 2kg: 360, 4kg: 540 particles
         packetRemainingRef.current = total;
         totalPacketParticlesRef.current = total;
@@ -141,7 +145,7 @@ export const HydroCanvas: React.FC<HydroCanvasProps> = ({
       }
     }
     prevIsPlayingRef.current = isPlaying;
-  }, [isPlaying, generationMode, mass, progress]);
+  }, [isPlaying, generationMode, mass, progress, heightMeters]);
 
   // Main Simulation & Rendering Loop
   useEffect(() => {
@@ -165,11 +169,7 @@ export const HydroCanvas: React.FC<HydroCanvasProps> = ({
 
       // Coordinates setup adapted to the expansive simulation canvas
       const groundY = height - 58;
-      const reservoirTopY = 48;
-      const reservoirBottomY = Math.max(reservoirTopY + 80, groundY - 180);
       const damWallX = Math.max(160, Math.min(240, width * 0.23));
-      const penstockStartX = damWallX + 6;
-      const penstockStartY = reservoirTopY + 38;
 
       // Powerhouse & Turbine coordinates
       const nozzleX = Math.max(damWallX + 220, Math.min(width - 240, width * 0.62));
@@ -178,10 +178,23 @@ export const HydroCanvas: React.FC<HydroCanvasProps> = ({
       const turbineCenterY = nozzleY + 2;
       const turbineRadius = 28;
 
+      // Dynamic Reservoir Elevation based on heightMeters (0m to 6m)
+      // At h = 6m, vertical drop is maximum (~280px)
+      // At h = 0m, penstockStartY = nozzleY (no vertical drop, horizontal pipe)
+      const effectiveH = Math.max(0, Math.min(6, heightMeters));
+      const maxPixelDrop = nozzleY - 68;
+      const currentPixelDrop = (effectiveH / 6) * maxPixelDrop;
+
+      const penstockStartY = nozzleY - currentPixelDrop;
+      const damTopY = penstockStartY - 24;
+      const reservoirTopY = damTopY + 4;
+      const reservoirBottomY = groundY;
+      const penstockStartX = damWallX + 6;
+
       // Penstock vector
       const pipeDx = nozzleX - penstockStartX;
       const pipeDy = nozzleY - penstockStartY;
-      const pipeLength = Math.sqrt(pipeDx * pipeDx + pipeDy * pipeDy);
+      const pipeLength = Math.max(1, Math.sqrt(pipeDx * pipeDx + pipeDy * pipeDy));
       const pipeTx = pipeDx / pipeLength;
       const pipeTy = pipeDy / pipeLength;
       const pipeNx = -pipeTy;
@@ -192,12 +205,13 @@ export const HydroCanvas: React.FC<HydroCanvasProps> = ({
       // 1. PARTICLE EMISSION (ONLY DISCRETE WATER DROPLETS, NO SOLID BLOCKS!)
       // ======================================================================
       let spawnRate = 0;
-      if (isPlaying) {
+      // Key rule: Lake must be elevated (effectiveH > 0) for water to flow!
+      if (isPlaying && effectiveH > 0) {
+        const hVelocityScale = Math.sqrt(effectiveH / 4);
         if (generationMode === 'continuous') {
-          spawnRate = 140 + mass * 75;
+          spawnRate = (140 + mass * 75) * Math.min(1.25, Math.max(0.6, hVelocityScale));
         } else if (generationMode === 'packet' && packetRemainingRef.current > 0) {
-          // Discharges the packet in ~1.8 - 2.2 seconds
-          spawnRate = 160 + mass * 85;
+          spawnRate = (160 + mass * 85) * Math.min(1.25, Math.max(0.6, hVelocityScale));
         }
       }
 
@@ -220,11 +234,12 @@ export const HydroCanvas: React.FC<HydroCanvasProps> = ({
           color = '#0284c7';
         }
 
+        const hVelocityScale = Math.sqrt(effectiveH / 4);
         dropletsRef.current.push({
           id: nextParticleIdRef.current++,
           t: Math.random() * 0.03, // Starts right at the intake mouth
           lateral: (Math.random() - 0.5) * 1.5,
-          speed: 35 + Math.random() * 20, // Initial entry velocity ~0.4 m/s
+          speed: (32 + Math.random() * 18) * Math.max(0.5, hVelocityScale), // Initial entry velocity
           radius: isAerated ? 1.0 + Math.random() * 1.4 : 1.4 + Math.random() * 1.8,
           color,
           alpha: 0.9 + Math.random() * 0.1,
@@ -247,6 +262,7 @@ export const HydroCanvas: React.FC<HydroCanvasProps> = ({
 
         if (d.phase === 'pipe') {
           // Inside penstock: accelerates according to slope angle
+          // When h = 0: pipeTy = 0, so acceleration = 0!
           const accel = pixelGravity * pipeTy * 1.35;
           d.speed += accel * dt;
 
@@ -358,17 +374,18 @@ export const HydroCanvas: React.FC<HydroCanvasProps> = ({
       dropletsRef.current = nextDroplets;
 
       // ======================================================================
-      // 3. TURBINE PHYSICAL RESPONSE (Starts slow, accelerates, and stops when water ends!)
+      // 3. TURBINE PHYSICAL RESPONSE (Starts slow, accelerates, scales with h & m!)
       // ======================================================================
       // Density factor: 1kg (thưa, 0.5), 2kg (chuẩn, 0.75), 4kg (đậm đặc, 1.0)
       const densityFactor = mass === 1 ? 0.5 : mass === 2 ? 0.75 : 1.0;
-      const targetRpm = Math.round(550 + densityFactor * 1050); // 1kg -> ~775, 2kg -> ~1150, 4kg -> ~1600 RPM
-      const isWaterStriking = activeStrikingCount > 0;
+      // Key Physics: Velocity at turbine v = sqrt(2gh) -> Target RPM scales directly with height!
+      const heightFactor = effectiveH > 0 ? Math.sqrt(effectiveH / 4) : 0;
+      const targetRpm = Math.round((550 + densityFactor * 1050) * heightFactor);
+      const isWaterStriking = activeStrikingCount > 0 && effectiveH > 0;
 
       if (isWaterStriking) {
-        // As requested: Khi vừa tác dụng, tua-bin quay chậm và sau đó nhanh lên
-        // Torque acceleration rate scales with mass & volume of hitting particles
-        const torqueAccel = 180 + densityFactor * 720;
+        // Torque acceleration rate scales with mass & volume & velocity of hitting particles
+        const torqueAccel = (180 + densityFactor * 720) * heightFactor;
         if (turbineRpmRef.current < targetRpm) {
           turbineRpmRef.current = Math.min(
             targetRpm,
@@ -398,9 +415,8 @@ export const HydroCanvas: React.FC<HydroCanvasProps> = ({
           whirSoundThrottleRef.current = now;
         }
       } else {
-        // As requested: "hết thì dừng" (khi hết hạt nước tác dụng, tua-bin giảm tốc dần và dừng hẳn)
+        // When water stops or h = 0: decelerate smoothly to zero
         if (turbineRpmRef.current > 0) {
-          // Natural rotational deceleration caused by bearing friction and electrical load
           turbineRpmRef.current = Math.max(0, turbineRpmRef.current - dt * 280);
           bulbGlowRef.current = Math.max(0, bulbGlowRef.current - dt * 0.95);
         }
@@ -421,9 +437,10 @@ export const HydroCanvas: React.FC<HydroCanvasProps> = ({
 
       // Track flow progress for external gauges
       if (isPlaying) {
-        if (generationMode === 'packet') {
+        if (effectiveH === 0) {
+          onProgressUpdate(0);
+        } else if (generationMode === 'packet') {
           if (dropletsRef.current.length > 0) {
-            // Progress follows lead droplet along penstock, then striking phase
             const leadT = maxT;
             let pVal = leadT * 0.75;
             if (isWaterStriking) {
@@ -432,7 +449,6 @@ export const HydroCanvas: React.FC<HydroCanvasProps> = ({
             }
             onProgressUpdate(pVal);
           } else if (packetRemainingRef.current <= 0 && turbineRpmRef.current <= 5) {
-            // Packet completely ended and turbine stopped
             onProgressUpdate(1.2);
           }
         } else {
@@ -503,7 +519,7 @@ export const HydroCanvas: React.FC<HydroCanvasProps> = ({
       // --- A. Concrete Hydroelectric Dam Structure ---
       ctx.save();
       const damSlopeEndX = Math.min(width * 0.46, damWallX + 160);
-      const damGrad = ctx.createLinearGradient(20, reservoirTopY, damSlopeEndX, groundY);
+      const damGrad = ctx.createLinearGradient(20, damTopY, damSlopeEndX, groundY);
       damGrad.addColorStop(0, '#475569');
       damGrad.addColorStop(0.55, '#334155');
       damGrad.addColorStop(1, '#1e293b');
@@ -513,8 +529,8 @@ export const HydroCanvas: React.FC<HydroCanvasProps> = ({
 
       ctx.beginPath();
       ctx.moveTo(15, groundY);
-      ctx.lineTo(15, reservoirTopY);
-      ctx.lineTo(damWallX + 16, reservoirTopY);
+      ctx.lineTo(15, damTopY);
+      ctx.lineTo(damWallX + 16, damTopY);
       ctx.lineTo(damSlopeEndX, groundY);
       ctx.lineTo(15, groundY);
       ctx.closePath();
@@ -526,7 +542,7 @@ export const HydroCanvas: React.FC<HydroCanvasProps> = ({
       ctx.lineWidth = 1;
       ctx.globalAlpha = 0.35;
       for (let s = 1; s <= 5; s++) {
-        const sy = reservoirTopY + (groundY - reservoirTopY) * (s / 6);
+        const sy = damTopY + (groundY - damTopY) * (s / 6);
         ctx.beginPath();
         ctx.moveTo(15, sy);
         ctx.lineTo(damWallX + 16 + (damSlopeEndX - damWallX - 16) * (s / 6), sy);
@@ -536,51 +552,108 @@ export const HydroCanvas: React.FC<HydroCanvasProps> = ({
 
       // --- B. Reservoir Lake Water (Hồ chứa nước thượng lưu) ---
       ctx.save();
-      const resGrad = ctx.createLinearGradient(0, reservoirTopY, 0, reservoirBottomY);
-      resGrad.addColorStop(0, '#0284c7');
-      resGrad.addColorStop(1, '#0369a1');
+      const waterTopY = reservoirTopY + 5;
+      const resGrad = ctx.createLinearGradient(0, waterTopY, 0, reservoirBottomY);
+      if (effectiveH > 0) {
+        resGrad.addColorStop(0, '#0284c7');
+        resGrad.addColorStop(1, '#0369a1');
+      } else {
+        // Muddy shallow water at reservoir bottom when h = 0
+        resGrad.addColorStop(0, '#334155');
+        resGrad.addColorStop(1, '#1e293b');
+      }
       ctx.fillStyle = resGrad;
-      ctx.fillRect(16, reservoirTopY + 5, damWallX - 10, reservoirBottomY - reservoirTopY);
+      ctx.fillRect(16, waterTopY, damWallX - 10, reservoirBottomY - waterTopY);
 
       // Surface ripples on reservoir lake
-      ctx.strokeStyle = '#7dd3fc';
+      ctx.strokeStyle = effectiveH > 0 ? '#7dd3fc' : '#64748b';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(16, reservoirTopY + 7);
+      ctx.moveTo(16, waterTopY + 2);
       for (let wx = 16; wx <= damWallX + 5; wx += 16) {
-        const waveY = reservoirTopY + 7 + Math.sin(now * 0.004 + wx * 0.25) * 1.5;
+        const waveY = waterTopY + 2 + Math.sin(now * 0.004 + wx * 0.25) * (effectiveH > 0 ? 1.5 : 0.5);
         ctx.lineTo(wx, waveY);
       }
       ctx.stroke();
 
-      // Reservoir lake text
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 11px system-ui, sans-serif';
+      // Reservoir lake text & energy notation
       ctx.textAlign = 'center';
-      ctx.fillText('HỒ CHỨA THƯỢNG LƯU (h = 4m)', (damWallX + 16) / 2, reservoirTopY + 28);
-      ctx.fillStyle = '#bae6fd';
-      ctx.font = '9.5px monospace';
-      ctx.fillText(`Mật độ: ${mass} kg/s (Wt = ${mass * 10 * 4} J)`, (damWallX + 16) / 2, reservoirTopY + 44);
+      if (effectiveH > 0) {
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 11px system-ui, sans-serif';
+        ctx.fillText(`HỒ CHỨA THƯỢNG LƯU (h = ${effectiveH}m)`, (damWallX + 16) / 2, waterTopY + 22);
+        ctx.fillStyle = '#bae6fd';
+        ctx.font = '9.5px monospace';
+        ctx.fillText(`Wt = m·g·h = ${mass * 10 * effectiveH} J`, (damWallX + 16) / 2, waterTopY + 38);
+      } else {
+        ctx.fillStyle = '#fbbf24';
+        ctx.font = 'bold 10px system-ui, sans-serif';
+        ctx.fillText('HỒ Ở ĐÁY (h = 0m)', (damWallX + 16) / 2, waterTopY + 16);
+        ctx.fillStyle = '#f87171';
+        ctx.font = '8.5px system-ui, sans-serif';
+        ctx.fillText('Wt = 0 J (Không thể chảy)', (damWallX + 16) / 2, waterTopY + 28);
+      }
+      ctx.restore();
+
+      // --- B2. Vertical Elevation Ruler & Gauge (Thước đo cột nước h) ---
+      ctx.save();
+      const rulerX = 24;
+      // Draw vertical ruler background bar
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+      ctx.strokeStyle = '#334155';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(rulerX - 8, nozzleY - maxPixelDrop - 6, 20, maxPixelDrop + 14);
+      ctx.fillRect(rulerX - 8, nozzleY - maxPixelDrop - 6, 20, maxPixelDrop + 14);
+
+      // Ruler ticks from 0m to 6m
+      ctx.font = '8px monospace';
+      ctx.textAlign = 'left';
+      for (let m = 0; m <= 6; m++) {
+        const tickY = nozzleY - (m / 6) * maxPixelDrop;
+        const isCurrentH = Math.abs(m - effectiveH) < 0.25;
+        ctx.strokeStyle = isCurrentH ? '#38bdf8' : '#64748b';
+        ctx.lineWidth = m % 2 === 0 ? 1.5 : 1;
+        ctx.beginPath();
+        ctx.moveTo(rulerX - 6, tickY);
+        ctx.lineTo(rulerX + (m % 2 === 0 ? 4 : 1), tickY);
+        ctx.stroke();
+
+        if (m % 2 === 0) {
+          ctx.fillStyle = isCurrentH ? '#38bdf8' : '#94a3b8';
+          ctx.fillText(`${m}m`, rulerX + 5, tickY + 2.5);
+        }
+      }
+
+      // Height pointer arrow for current water level
+      const arrowY = penstockStartY;
+      ctx.fillStyle = '#38bdf8';
+      ctx.beginPath();
+      ctx.moveTo(rulerX + 16, arrowY);
+      ctx.lineTo(rulerX + 22, arrowY - 4);
+      ctx.lineTo(rulerX + 22, arrowY + 4);
+      ctx.closePath();
+      ctx.fill();
       ctx.restore();
 
       // --- C. Sluice Gate (Van xả nước tại cửa nhận nước) ---
       ctx.save();
-      const isGateOpen = isPlaying || dropletsRef.current.length > 0;
+      const isGateOpen = (isPlaying || dropletsRef.current.length > 0) && effectiveH > 0;
       ctx.fillStyle = '#1e293b';
       ctx.strokeStyle = '#64748b';
       ctx.lineWidth = 1.5;
       ctx.strokeRect(damWallX - 4, penstockStartY - 24, 10, 48);
 
       const gateLift = isGateOpen ? -20 : 0;
-      ctx.fillStyle = isGateOpen ? '#10b981' : '#ef4444';
+      ctx.fillStyle = effectiveH === 0 ? '#64748b' : isGateOpen ? '#10b981' : '#ef4444';
       ctx.fillRect(damWallX - 3, penstockStartY - 8 + gateLift, 8, 28);
-      ctx.strokeStyle = isGateOpen ? '#059669' : '#b91c1c';
+      ctx.strokeStyle = effectiveH === 0 ? '#475569' : isGateOpen ? '#059669' : '#b91c1c';
       ctx.strokeRect(damWallX - 3, penstockStartY - 8 + gateLift, 8, 28);
 
-      ctx.fillStyle = isGateOpen ? '#34d399' : '#f87171';
-      ctx.font = 'bold 8.5px system-ui, sans-serif';
+      ctx.fillStyle = effectiveH === 0 ? '#94a3b8' : isGateOpen ? '#34d399' : '#f87171';
+      ctx.font = 'bold 8px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(isGateOpen ? 'MỞ' : 'ĐÓNG', damWallX + 1, penstockStartY - 12 + gateLift);
+      const gateText = effectiveH === 0 ? 'h=0' : isGateOpen ? 'MỞ' : 'ĐÓNG';
+      ctx.fillText(gateText, damWallX + 1, penstockStartY - 12 + gateLift);
       ctx.restore();
 
       // --- D. Steel Penstock Conduit (Ống áp lực thép có mặt cắt trong suốt) ---
@@ -959,6 +1032,7 @@ export const HydroCanvas: React.FC<HydroCanvasProps> = ({
     };
   }, [
     mass,
+    heightMeters,
     generationMode,
     isPlaying,
     progress,
@@ -993,9 +1067,50 @@ export const HydroCanvas: React.FC<HydroCanvasProps> = ({
   return (
     <div
       ref={containerRef}
-      className="w-full h-96 sm:h-[460px] lg:h-[520px] relative rounded-2xl overflow-hidden border border-slate-800 shadow-2xl bg-slate-950 select-none"
+      className="w-full h-96 sm:h-[460px] lg:h-[520px] relative rounded-2xl overflow-hidden border border-slate-800 shadow-2xl bg-slate-950 select-none group"
     >
       <canvas ref={canvasRef} className="w-full h-full block cursor-pointer" />
+
+      {/* Dynamic Elevation Indicator in Top Corner */}
+      <div className="absolute top-3 left-3 bg-slate-900/85 backdrop-blur-md border border-slate-700/80 rounded-xl px-3 py-1.5 shadow-lg flex items-center gap-2 pointer-events-none z-10">
+        <div className={`w-2.5 h-2.5 rounded-full ${heightMeters > 0 ? 'bg-sky-400 animate-pulse' : 'bg-amber-400'}`} />
+        <span className="text-xs font-semibold text-slate-200">
+          Cột nước h: <strong className={heightMeters > 0 ? 'text-sky-400' : 'text-amber-400'}>{heightMeters}m</strong>
+        </span>
+        <span className="text-[10px] text-slate-400 border-l border-slate-700 pl-2">
+          Wt = {mass * 10 * heightMeters} J
+        </span>
+      </div>
+
+      {/* Direct Physics Feedback: When heightMeters is 0, water CANNOT flow */}
+      {heightMeters === 0 && (
+        <div className="absolute inset-0 bg-slate-950/70 backdrop-blur-[2px] flex items-center justify-center p-4 z-20 animate-in fade-in duration-200">
+          <div className="bg-slate-900/95 border-2 border-amber-500/80 p-5 sm:p-6 rounded-2xl max-w-md text-center shadow-2xl space-y-3">
+            <div className="w-12 h-12 mx-auto rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-2xl font-bold">
+              🌊
+            </div>
+            <h3 className="text-base font-bold text-white">
+              Hồ ở dưới thấp (h = 0m) — Nước không thể chảy!
+            </h3>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Theo quy luật Cơ năng KHTN 9: Khi hồ ở ngang đáy (<strong className="text-amber-400">h = 0m</strong>), thế năng trọng trường <strong className="text-sky-400">Wt = m·g·h = 0 J</strong> và không có chênh lệch áp suất. 
+              <br />
+              <span className="text-emerald-400 font-semibold mt-1 inline-block">
+                Hồ chứa phải được dâng lên cao (h &gt; 0) thì mới có thế năng để nước tự chảy xuống sinh công!
+              </span>
+            </p>
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={onElevateReservoir}
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-slate-950 font-bold text-xs shadow-lg shadow-sky-500/30 active:scale-95 transition cursor-pointer inline-flex items-center gap-2"
+              >
+                <span>🚀 Nâng hồ chứa lên cao (+4m) để nước chảy</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
